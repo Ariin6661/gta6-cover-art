@@ -1,69 +1,78 @@
-// Vice Coast colour grades. A grade is a treatment laid over a photo panel:
-// a warm wash (soft-light), a two-stop overlay gradient, a vignette
-// strength, and the colours used for the title text and its shadow.
+// Colour grades for Vice Coast Cover Studio.
 //
-// Every grade is built by makeGrade so the seven fields stay in the same
-// order; the values below are the whole look of the app.
-function makeGrade(label, wash, top, bottom, vignette, accent, titleShadow) {
-  return { label, wash, top, bottom, vignette, accent, titleShadow };
+// A grade is one look for the whole cover: the accent colour paints the
+// title edge, the subtitle and the badge; a translucent wash tints every
+// photo; and the sky gradient behind the Tilted Snaps layout follows the
+// same mood. Noir is the plain one: no wash, white accents, grey sky.
+export const GRADES = [
+  {
+    id: 'sunset',
+    label: 'Sunset',
+    dot: '#ff2e7e',
+    accent: '#ff2e7e',
+    edge: '#4a1030',
+    ink: '#20102a',
+    wash: '#ff5e8a',
+    washAlpha: 0.2,
+    washBlend: 'overlay',
+    sky: ['#5b2a86', '#c2277e', '#f08a3c', '#f7e3b8'],
+  },
+  {
+    id: 'neon',
+    label: 'Neon Night',
+    dot: '#17e6c8',
+    accent: '#12d9b8',
+    edge: '#062a33',
+    ink: '#06251f',
+    wash: '#19e3c2',
+    washAlpha: 0.2,
+    washBlend: 'overlay',
+    sky: ['#0d1b4c', '#3b2a7a', '#0e7f8c', '#17e6c8'],
+  },
+  {
+    id: 'golden',
+    label: 'Golden Hour',
+    dot: '#f7b731',
+    accent: '#f0a020',
+    edge: '#4a2c05',
+    ink: '#2a1a05',
+    wash: '#ffb52e',
+    washAlpha: 0.2,
+    washBlend: 'overlay',
+    sky: ['#7a3b12', '#c96a1e', '#f7b731', '#ffe9a8'],
+  },
+  {
+    id: 'violet',
+    label: 'Vice Violet',
+    dot: '#a55eff',
+    accent: '#a55eff',
+    edge: '#2a1150',
+    ink: '#1d0b33',
+    wash: '#9a5cff',
+    washAlpha: 0.22,
+    washBlend: 'overlay',
+    sky: ['#2a1150', '#6b2fb8', '#b06bff', '#e3c8ff'],
+  },
+  {
+    id: 'noir',
+    label: 'Noir',
+    dot: '#f2f2f2',
+    accent: '#ffffff',
+    edge: '#16101f',
+    ink: '#16101f',
+    wash: null,
+    washAlpha: 0,
+    washBlend: 'overlay',
+    sky: ['#3a3a44', '#6d6d78', '#9a9aa2', '#e8e8ea'],
+  },
+];
+
+// Look a grade up by id; anything unknown falls back to the first grade.
+export function gradeById(id) {
+  return GRADES.find((g) => g.id === id) ?? GRADES[0];
 }
 
-export const GRADES = {
-  // Warm orange dusk, pink at the bottom of the frame.
-  sunset: makeGrade(
-    'Sunset',
-    'rgba(255, 110, 60, 0.20)',
-    'rgba(255, 190, 90, 0.10)',
-    'rgba(190, 30, 110, 0.42)',
-    0.34,
-    '#ff5e8a',
-    '#ff2e88',
-  ),
-
-  // Cool cyan wash with a magenta-purple base: night on the strip.
-  neon: makeGrade(
-    'Neon Night',
-    'rgba(40, 220, 220, 0.16)',
-    'rgba(30, 220, 200, 0.12)',
-    'rgba(150, 20, 180, 0.46)',
-    0.40,
-    '#2ee6d6',
-    '#00e5ff',
-  ),
-
-  // Honey light, the hour before the sun drops.
-  golden: makeGrade(
-    'Golden Hour',
-    'rgba(255, 180, 60, 0.26)',
-    'rgba(255, 210, 120, 0.14)',
-    'rgba(140, 60, 10, 0.38)',
-    0.30,
-    '#ffb347',
-    '#ff9d00',
-  ),
-
-  // Purple haze, deepest vignette of the colour grades.
-  violet: makeGrade(
-    'Vice Violet',
-    'rgba(150, 90, 255, 0.20)',
-    'rgba(190, 120, 255, 0.12)',
-    'rgba(90, 10, 140, 0.48)',
-    0.38,
-    '#c77dff',
-    '#a100f2',
-  ),
-
-  // Near-monochrome: a faint grey wash and a heavy dark base.
-  noir: makeGrade(
-    'Noir',
-    'rgba(200, 200, 210, 0.10)',
-    'rgba(220, 220, 230, 0.06)',
-    'rgba(5, 5, 15, 0.55)',
-    0.48,
-    '#e8e8f0',
-    '#444455',
-  ),
-};
-
-/** The grades in menu order. */
-export const GRADE_ORDER = ['sunset', 'neon', 'golden', 'violet', 'noir'];
+// The colour of the dot shown on a grade button.
+export function gradeDot(id) {
+  return gradeById(id).dot;
+}

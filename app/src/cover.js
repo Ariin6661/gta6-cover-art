@@ -1,237 +1,198 @@
-// Vice Coast cover painting: photo panels in a layout, a sunset or neon
-// grade washed over each one, and big caption lettering on top. One
-// renderer serves both the live preview and the exported PNG, so what
-// you see is exactly what you save.
-import { GRADES } from './grades.js';
-import { LAYOUTS } from './layouts.js';
+// Cover renderer for Vice Coast Cover Studio.
+//
+// drawCover paints one cover onto a canvas context at any size: the
+// backdrop, the photo panels with their frames and grade wash, then the
+// title, subtitle and badge. Everything is drawn from the state object
+// main.js keeps: photos, panels, views, layout, grade and the three texts.
+import { gradeById } from './grades.js';
+import { zonesFor } from './layouts.js';
+import { coverRect } from './photos.js';
 
-/** A small xorshift generator: cheap, deterministic, same dots every render. */
-export function makeRng(seed) {
-  let s = (seed >>> 0) || 0x9e3779b9;
-  return function next() {
-    s ^= s << 13;
-    s ^= s >>> 17;
-    s ^= s << 5;
-    return (s >>> 0) / 4294967296;
-  };
-}
+const CREAM = '#f6ead6';
+const GUTTER = '#1b1030';
+const TITLE_FACE = 'Anton, "Arial Narrow", sans-serif';
+const SCRIPT_FACE = 'Pacifico, cursive';
 
-/** Paints `img` so it covers `rect`, then zooms and pans it by fractions of the rect. */
-export function drawFittedPhoto(ctx, img, rect, zoom, dx, dy) {
-  const cover = Math.max(rect.w / img.naturalWidth, rect.h / img.naturalHeight);
-  const scale = cover * Math.max(0.2, zoom);
-  const w = img.naturalWidth * scale;
-  const h = img.naturalHeight * scale;
-  const x = rect.x + (rect.w - w) / 2 + dx * rect.w;
-  const y = rect.y + (rect.h - h) / 2 + dy * rect.h;
-  ctx.drawImage(img, x, y, w, h);
-}
-
-/** Washes one photo panel with its grade: warm tint, vertical gradient, vignette. */
-export function gradePanel(ctx, rect, grade) {
-  ctx.save();
-  ctx.globalCompositeOperation = 'soft-light';
-  ctx.fillStyle = grade.wash;
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-  const wash = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.h);
-  wash.addColorStop(0, grade.top);
-  wash.addColorStop(1, grade.bottom);
-  ctx.globalCompositeOperation = 'overlay';
-  ctx.fillStyle = wash;
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-  ctx.restore();
-  const shade = ctx.createRadialGradient(
-    rect.x + rect.w / 2, rect.y + rect.h / 2, Math.min(rect.w, rect.h) * 0.35,
-    rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.75,
-  );
-  shade.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  shade.addColorStop(1, 'rgba(0, 0, 0, ' + grade.vignette + ')');
-  ctx.fillStyle = shade;
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-}
-
-/** Shrinks the font until `text` fits `maxWidth`, starting at `start` px. Returns the size. */
-export function fitFont(ctx, text, family, start, maxWidth) {
-  let size = start;
-  const set = (px) => { ctx.font = px + 'px ' + family; };
-  set(size);
-  while (size > 10 && ctx.measureText(text).width > maxWidth) {
-    size = Math.max(10, Math.floor(size / 1.06));
-    set(size);
+// Shrink a title until it fits its maximum width, then return the size.
+function fitSize(ctx, text, size, maxW, face) {
+  let s = size;
+  ctx.font = `400 ${s}px ${face}`;
+  while (s > 12 && ctx.measureText(text).width > maxW) {
+    s = Math.floor(s * 0.94);
+    ctx.font = `400 ${s}px ${face}`;
   }
-  return size;
+  return s;
 }
 
-/** Fills a title block's sunset gradient and speckles it with light dots. */
-function paintBlockBackdrop(ctx, zone) {
-  const g = ctx.createLinearGradient(zone.x, zone.y, zone.x, zone.y + zone.h);
-  g.addColorStop(0, '#ff7a3d');
-  g.addColorStop(0.55, '#e83e8c');
-  g.addColorStop(1, '#5b2a86');
-  ctx.fillStyle = g;
-  ctx.fillRect(zone.x, zone.y, zone.w, zone.h);
-  const rand = makeRng(77);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.20)';
-  for (let y = zone.y + 8; y < zone.y + zone.h - 4; y += 14) {
-    for (let x = zone.x + 8; x < zone.x + zone.w - 4; x += 14) {
-      if (rand() < 0.45) continue;
+// The sky behind Tilted Snaps: a vertical gradient with a pale sun.
+function paintSky(ctx, W, H, grade, sun) {
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  const stops = grade.sky;
+  stops.forEach((c, i) => sky.addColorStop(i / (stops.length - 1), c));
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+  if (sun) {
+    ctx.fillStyle = '#ffe9b0';
+    ctx.beginPath();
+    ctx.arc(sun.x, sun.y, sun.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// The dotted pattern inside the Nine Panel title cell.
+function paintDots(ctx, cell, grade) {
+  ctx.save();
+  ctx.fillStyle = grade.accent;
+  ctx.globalAlpha = 0.16;
+  const step = Math.max(14, Math.round(cell.w / 24));
+  for (let y = cell.y + step; y < cell.y + cell.h; y += step) {
+    for (let x = cell.x + step; x < cell.x + cell.w; x += step) {
       ctx.beginPath();
-      ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+      ctx.arc(x, y, Math.max(2, step * 0.09), 0, Math.PI * 2);
       ctx.fill();
     }
   }
+  ctx.restore();
 }
 
-/** Shades the bottom band a layout's title sits on. */
-function paintBandShade(ctx, zone, W) {
-  const g = ctx.createLinearGradient(0, zone.y, 0, zone.y + zone.h);
-  g.addColorStop(0, 'rgba(10, 5, 20, 0)');
-  g.addColorStop(1, 'rgba(10, 5, 20, 0.82)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, zone.y, W, zone.h);
-}
-
-/** Paints the title, subtitle and badge inside a layout's title zone. */
-export function drawTitleBlock(ctx, zone, W, H, state, grade) {
-  const title = (state.title || 'VICE COAST').trim().toUpperCase();
-  const sub = (state.subtitle || '').trim();
-  const badge = (state.badge || '').trim();
-  if (zone.block) paintBlockBackdrop(ctx, zone);
-  else if (zone.band) paintBandShade(ctx, zone, W);
-  const align = zone.align || 'left';
-  const tx = align === 'center' ? zone.x + zone.w / 2 : zone.x;
-  const titleSize = fitFont(ctx, title, 'Anton, "Arial Black", sans-serif', Math.round(H * 0.115), zone.w);
-  const baseline = zone.y + titleSize * 0.95;
-  ctx.textAlign = align;
-  ctx.font = titleSize + 'px Anton, "Arial Black", sans-serif';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = Math.max(3, titleSize * 0.09);
-  ctx.strokeStyle = '#14061f';
-  ctx.strokeText(title, tx, baseline);
-  ctx.shadowColor = grade.titleShadow;
-  ctx.shadowBlur = titleSize * 0.28;
-  ctx.shadowOffsetY = titleSize * 0.04;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(title, tx, baseline);
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetY = 0;
-  if (sub) {
-    const subSize = fitFont(ctx, sub, 'Pacifico, cursive', Math.round(H * 0.048), zone.w);
-    ctx.font = subSize + 'px Pacifico, cursive';
-    ctx.fillStyle = grade.accent;
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-    ctx.shadowBlur = subSize * 0.3;
-    ctx.fillText(sub, tx, baseline + subSize * 1.25);
-    ctx.shadowBlur = 0;
-  }
-  if (!badge) return;
-  const bSize = Math.round(H * 0.026);
-  ctx.font = 'bold ' + bSize + 'px "Arial Black", sans-serif';
-  const bw = ctx.measureText(badge).width + bSize * 1.6;
-  let bx = W - bw - W * 0.03;
-  let by = H * 0.03;
-  if (zone.block) {
-    bx = tx - bw / 2;
-    by = baseline + Math.round(H * 0.048) * 2.15;
-  }
-  ctx.fillStyle = grade.accent;
-  ctx.fillRect(bx, by, bw, bSize * 1.7);
-  ctx.fillStyle = '#14061f';
-  ctx.textAlign = 'left';
-  ctx.fillText(badge, bx + bSize * 0.8, by + bSize * 1.25);
-}
-
-/** Paints one photo slot: white frame, the photo (graded) or an empty placeholder. */
-function paintSlot(ctx, slot, panel, img, grade) {
+// One photo panel: the picture cover-fitted with its panel's framing,
+// the grade wash over it, and the frame around it.
+function paintPanel(ctx, panel, photo, view, grade, W) {
+  const rim = Math.round(0.006 * W);
   ctx.save();
-  ctx.translate(slot.x + slot.w / 2, slot.y + slot.h / 2);
-  ctx.rotate(slot.rot || 0);
-  ctx.translate(-slot.w / 2, -slot.h / 2);
-  const inner = { x: slot.frame, y: slot.frame, w: slot.w - slot.frame * 2, h: slot.h - slot.frame * 2 };
-  if (slot.frame > 0) {
-    ctx.fillStyle = '#fdf6ec';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    ctx.shadowBlur = slot.frame * 1.6;
-    ctx.shadowOffsetY = slot.frame * 0.5;
-    ctx.fillRect(0, 0, slot.w, slot.h);
+  if (panel.tilt) {
+    ctx.translate(panel.x + panel.w / 2, panel.y + panel.h / 2);
+    ctx.rotate((panel.tilt * Math.PI) / 180);
+    ctx.translate(-panel.w / 2, -panel.h / 2);
+  }
+  if (panel.frame === 'polaroid') {
+    ctx.fillStyle = '#fdf8ec';
+    ctx.shadowColor = 'rgba(20, 8, 32, 0.45)';
+    ctx.shadowBlur = Math.round(0.02 * W);
+    ctx.shadowOffsetY = Math.round(0.008 * W);
+    ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
+    ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
+  } else if (panel.frame === 'cream') {
+    ctx.fillStyle = CREAM;
+    ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
   }
+  const inner = panel.frame === 'polaroid'
+    ? { x: rim, y: rim, w: panel.w - 2 * rim, h: panel.h - rim - Math.round(0.045 * panel.h) }
+    : panel.frame === 'cream'
+      ? { x: rim, y: rim, w: panel.w - 2 * rim, h: panel.h - 2 * rim }
+      : { x: 0, y: 0, w: panel.w, h: panel.h };
   ctx.save();
   ctx.beginPath();
-  ctx.rect(inner.x, inner.y, inner.w, inner.h);
+  ctx.rect(panel.x + inner.x, panel.y + inner.y, inner.w, inner.h);
   ctx.clip();
-  if (img) {
-    drawFittedPhoto(ctx, img, inner, panel.zoom, panel.dx, panel.dy);
-    gradePanel(ctx, inner, grade);
-  } else {
-    const g = ctx.createLinearGradient(inner.x, inner.y, inner.x, inner.y + inner.h);
-    g.addColorStop(0, '#3a1c5c');
-    g.addColorStop(1, '#12081f');
-    ctx.fillStyle = g;
-    ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
-    ctx.font = 'bold ' + Math.round(inner.h * 0.09) + 'px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('ADD A PHOTO', inner.x + inner.w / 2, inner.y + inner.h / 2);
+  const r = coverRect(photo.img, inner.w, inner.h, view.zoom, view.ox, view.oy);
+  ctx.drawImage(photo.img, panel.x + inner.x + r.dx, panel.y + inner.y + r.dy, r.dw, r.dh);
+  if (grade.wash) {
+    ctx.globalCompositeOperation = grade.washBlend;
+    ctx.globalAlpha = grade.washAlpha;
+    ctx.fillStyle = grade.wash;
+    ctx.fillRect(panel.x + inner.x, panel.y + inner.y, inner.w, inner.h);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
   }
   ctx.restore();
   ctx.restore();
 }
 
-/** The sunset sky behind the tilted snapshots: orange-pink gradient and a low sun. */
-function paintSunsetSky(ctx, W, H) {
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, '#2b1055');
-  sky.addColorStop(0.45, '#e83e8c');
-  sky.addColorStop(0.75, '#ff7a3d');
-  sky.addColorStop(1, '#ffd194');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = 'rgba(255, 209, 148, 0.9)';
-  ctx.beginPath();
-  ctx.arc(W * 0.78, H * 0.20, H * 0.09, 0, Math.PI * 2);
-  ctx.fill();
+// The badge: a solid accent chip with dark bold lettering. spot.align
+// says where spot.x sits: 'right' puts the chip's right edge there,
+// 'center' centres the chip on it, anything else starts the chip there.
+function paintBadge(ctx, spot, text, grade) {
+  if (!text) return;
+  ctx.font = `400 ${spot.size}px ${TITLE_FACE}`;
+  const tw = ctx.measureText(text).width;
+  const padX = Math.round(spot.size * 0.7);
+  const padY = Math.round(spot.size * 0.45);
+  const bw = tw + 2 * padX;
+  const bh = spot.size + 2 * padY;
+  const bx = spot.align === 'right' ? spot.x - bw : spot.align === 'center' ? spot.x - bw / 2 : spot.x;
+  ctx.fillStyle = grade.accent;
+  ctx.fillRect(bx, spot.y, bw, bh);
+  ctx.fillStyle = grade.ink;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, bx + padX, spot.y + bh / 2 + 1);
 }
 
-/** Draws the whole cover for `state` onto `canvas` at its own size. */
-export function drawCover(canvas, state) {
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width;
-  const H = canvas.height;
-  const layout = LAYOUTS[state.layout] || LAYOUTS.poster;
-  const grade = GRADES[state.grade] || GRADES.sunset;
-  ctx.fillStyle = '#160a24';
-  ctx.fillRect(0, 0, W, H);
-  if (state.layout === 'tilted') paintSunsetSky(ctx, W, H);
-  const slots = layout.slots(W, H);
-  const loaded = Math.max(1, state.photos.filter(Boolean).length);
-  slots.forEach((slot, i) => {
-    const panel = state.panels[i] || { photo: i % loaded, zoom: 1, dx: 0, dy: 0 };
-    paintSlot(ctx, slot, panel, state.photos[panel.photo] || null, grade);
-  });
-  drawTitleBlock(ctx, layout.titleZone(W, H), W, H, state, grade);
-  grainCover(ctx, W, H, 1337);
-  return canvas;
+// The big title and the script subtitle under it.
+function paintLettering(ctx, titleZone, subtitleZone, title, subtitle, grade) {
+  if (title) {
+    const size = fitSize(ctx, title, titleZone.size, titleZone.maxW, TITLE_FACE);
+    ctx.font = `400 ${size}px ${TITLE_FACE}`;
+    ctx.textAlign = titleZone.align ?? 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.shadowColor = grade.accent;
+    ctx.shadowBlur = Math.round(size * 0.22);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = grade.edge;
+    ctx.lineWidth = Math.max(2, Math.round(size * 0.09));
+    ctx.strokeText(title, titleZone.x, titleZone.baseline);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(title, titleZone.x, titleZone.baseline);
+    ctx.textAlign = 'left';
+  }
+  if (subtitle) {
+    const size = fitSize(ctx, subtitle, subtitleZone.size, subtitleZone.maxW, SCRIPT_FACE);
+    ctx.font = `400 ${size}px ${SCRIPT_FACE}`;
+    ctx.textAlign = subtitleZone.align ?? 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.shadowColor = 'rgba(20, 8, 32, 0.6)';
+    ctx.shadowBlur = Math.round(size * 0.18);
+    ctx.fillStyle = grade.accent;
+    ctx.fillText(subtitle, subtitleZone.x, subtitleZone.baseline);
+    ctx.shadowBlur = 0;
+    ctx.textAlign = 'left';
+  }
 }
 
-/** Renders `state` at `size` ("1080x1080" etc.) into a fresh canvas. */
-export function renderCover(state, size) {
-  const parts = size.split('x');
-  const canvas = document.createElement('canvas');
-  canvas.width = Number(parts[0]);
-  canvas.height = Number(parts[1]);
-  return drawCover(canvas, state);
-}
-
-/** Sprinkles deterministic film grain over the whole cover. */
-export function grainCover(ctx, W, H, seed) {
-  const rand = makeRng(seed);
-  const dots = Math.round((W * H) / 900);
+// Paint one whole cover. state holds photos (slots), panels (slot per
+// user panel), views (framing per user panel), layout, grade and the
+// three texts. A zone panel names its user panel; the photo it shows is
+// the slot that panel picks.
+export function drawCover(ctx, W, H, state) {
+  const grade = gradeById(state.grade);
+  const zones = zonesFor(state.layout, W, H);
   ctx.save();
-  for (let i = dots; i > 0; i--) {
-    ctx.fillStyle = rand() > 0.5 ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.06)';
-    ctx.fillRect(rand() * W, rand() * H, 1.6, 1.6);
+  ctx.clearRect(0, 0, W, H);
+  if (zones.backdrop === 'sky') {
+    paintSky(ctx, W, H, grade, zones.sun);
+  } else if (zones.backdrop === 'cream') {
+    ctx.fillStyle = CREAM;
+    ctx.fillRect(0, 0, W, H);
+    const m = Math.round(0.012 * W);
+    ctx.fillStyle = GUTTER;
+    ctx.fillRect(m, m, W - 2 * m, H - 2 * m);
   }
+  if (zones.titleCell) {
+    const cell = zones.titleCell;
+    const grad = ctx.createLinearGradient(0, cell.y, 0, cell.y + cell.h);
+    grad.addColorStop(0, grade.accent);
+    grad.addColorStop(1, '#7b2fbe');
+    ctx.fillStyle = grad;
+    ctx.fillRect(cell.x, cell.y, cell.w, cell.h);
+    paintDots(ctx, cell, grade);
+  }
+  zones.panels.forEach((panel) => {
+    const slot = state.panels[panel.panel] ?? 0;
+    const photo = state.photos[slot] ?? state.photos[0];
+    if (!photo) return;
+    paintPanel(ctx, panel, photo, state.views[panel.panel], grade, W);
+  });
+  if (zones.band) {
+    const band = ctx.createLinearGradient(0, zones.band.from * H, 0, zones.band.to * H);
+    band.addColorStop(0, 'rgba(20, 8, 32, 0)');
+    band.addColorStop(1, 'rgba(20, 8, 32, 0.88)');
+    ctx.fillStyle = band;
+    ctx.fillRect(0, zones.band.from * H, W, (zones.band.to - zones.band.from) * H);
+  }
+  paintLettering(ctx, zones.title, zones.subtitle, state.title, state.subtitle, grade);
+  paintBadge(ctx, zones.badge, state.badge, grade);
   ctx.restore();
 }
